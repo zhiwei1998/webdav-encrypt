@@ -1,0 +1,64 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'  # 使用项目所需的Go版本
+      
+      - name: Generate date tag
+        id: generate_tag
+        run: |
+          DATE_TAG=$(date -u +"v%Y%m%d")
+          echo "tag=${DATE_TAG}" >> $GITHUB_OUTPUT
+      
+      - name: Delete existing release and tag if exists
+        uses: dev-drprasad/delete-tag-and-release@v0.2.1
+        with:
+          delete_release: true
+          tag_name: ${{ steps.generate_tag.outputs.tag }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Build for Linux
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o webdav-encrypt-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o webdav-encrypt-linux-arm64 .
+      
+      - name: Build for android
+        run: |
+          CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -o webdav-encrypt-android-arm64 .
+      
+      - name: Build for Windows
+        run: |
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o webdav-encrypt-windows-amd64.exe .
+      
+      - name: Build for macOS
+        run: |
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o webdav-encrypt-darwin-amd64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o webdav-encrypt-darwin-arm64 .
+      
+      - name: Upload binaries to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.generate_tag.outputs.tag }}
+          name: Release ${{ steps.generate_tag.outputs.tag }}
+          body: "Automated build from GitHub Actions"
+          files: |
+            webdav-encrypt-linux-amd64
+            webdav-encrypt-linux-arm64
+            webdav-encrypt-android-arm64
+            webdav-encrypt-windows-amd64.exe
+            webdav-encrypt-darwin-amd64
+            webdav-encrypt-darwin-arm64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,47 @@
+# WebDAV Proxy 配置文件
+
+## 服务端设置
+# 后端WebDAV服务器URL (必填项，必须修改为实际的WebDAV服务器地址)
+backend_url: "https://example.com/webdav/"
+# 后端WebDAV用户名 (可选，如果后端服务器需要认证)
+backend_user: "webdav-username"
+# 后端WebDAV密码 (可选，如果后端服务器需要认证)
+backend_pass: "webdav-password"
+
+
+## 加密设置
+# 加密算法 (可选，默认: aesctr，可选项: mix, rc4, aesctr)
+algorithm: aesctr
+# 加密密码 (可选，如果不设置则不进行加密)
+password: "your-encryption-password"
+
+
+## 代理端设置
+# 监听地址 (默认: :8080)
+listen_addr: ":8080"
+# 启用代理端基本认证 (可选，默认: false)
+enable_auth: false
+# 代理认证用户名 (可选，当enable_auth为true时必填)
+auth_user: "proxy-username"
+# 代理认证密码 (可选，当enable_auth为true时必填)
+auth_pass: "proxy-password"
+
+
+## 日志设置
+# 日志级别 (可选，默认: info，可选项: trace, debug, info, warn, error, fatal)
+log_level: "info"
+# 启用调试模式 (可选，默认: false，向后兼容，建议使用log_level)
+debug: false
+
+
+## 性能设置
+# 块大小(字节) (可选，默认: 8192)
+chunk_size: 8192
+# 请求超时时间 (可选，默认: 30s)
+timeout: 30s
+# 最大空闲连接数 (可选，默认: 100)
+max_idle_conns: 100
+# 每个主机的最大空闲连接数 (可选，默认: 10)
+max_idle_conns_per_host: 10
+# 空闲连接超时时间 (可选，默认: 1m30s)
+idle_conn_timeout: 1m30s
