@@ -21,14 +21,6 @@ jobs:
           DATE_TAG=$(date -u +"v%Y%m%d")
           echo "tag=${DATE_TAG}" >> $GITHUB_OUTPUT
       
-      - name: Delete existing release and tag if exists
-        uses: dev-drprasad/delete-tag-and-release@v0.2.1
-        with:
-          delete_release: true
-          tag_name: ${{ steps.generate_tag.outputs.tag }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
       - name: Build for Linux
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o webdav-encrypt-linux-amd64 .
