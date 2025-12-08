@@ -19,7 +19,15 @@ import (
 	"webdav-proxy/utils"
 )
 
+const (
+	// Version 版本号
+	Version = "v20251208"
+)
+
 func main() {
+	// 添加版本参数
+	showVersion := flag.Bool("version", false, "显示版本信息")
+
 	// 设置flag的用法
 	flag.Usage = func() {
 		fmt.Println("WebDAV加密代理使用方法:")
@@ -39,6 +47,7 @@ func main() {
 		fmt.Printf("  -c, --config         配置文件路径 (YAML格式)\n")
 		fmt.Printf("  --chunk-size         块大小(字节)，默认: 8192\n")
 		fmt.Printf("  --debug              启用调试模式，默认: false\n")
+		fmt.Printf("  --version            显示版本信息\n")
 		fmt.Printf("  -h, --help           显示帮助信息\n")
 
 		fmt.Println()
@@ -68,8 +77,17 @@ func main() {
 	// 只添加缩写的变量映射，不显示在帮助信息中
 	flag.Bool("h", false, "显示帮助信息 (简写: -h)")
 	flag.StringVar(configFile, "c", *configFile, "")
-	flag.StringVar(algorithm, "t", *algorithm, "")
 	flag.StringVar(password, "p", *password, "")
+	flag.StringVar(algorithm, "t", *algorithm, "")
+
+	// 解析命令行参数
+	flag.Parse()
+
+	// 如果请求显示版本信息，则输出并退出
+	if *showVersion {
+		fmt.Printf("%s", Version)
+		return
+	}
 
 	// 保存默认值，用于判断参数是否被用户显式指定
 	defaultListenAddr := ":8080"
