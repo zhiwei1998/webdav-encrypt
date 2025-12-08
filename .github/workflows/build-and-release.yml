@@ -16,10 +16,10 @@ jobs:
         with:
           go-version: '1.24'  # 使用项目所需的Go版本
       
-      - name: Generate unique tag
+      - name: Generate date tag
         id: generate_tag
         run: |
-          DATE_TAG=$(date -u +"v%Y%m%d-%H%M%S")
+          DATE_TAG=$(date -u +"v%Y%m%d")
           echo "tag=${DATE_TAG}" >> $GITHUB_OUTPUT
       
       - name: Build for Linux
@@ -41,7 +41,7 @@ jobs:
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o webdav-encrypt-darwin-arm64 .
       
       - name: Upload binaries to Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.generate_tag.outputs.tag }}
           name: Release ${{ steps.generate_tag.outputs.tag }}
@@ -53,5 +53,6 @@ jobs:
             webdav-encrypt-windows-amd64.exe
             webdav-encrypt-darwin-amd64
             webdav-encrypt-darwin-arm64
+          overwrite: true  # 如果标签已存在，覆盖它
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
