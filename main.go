@@ -150,19 +150,20 @@ func main() {
 	}
 
 	// 创建代理处理器
-	proxyHandler, err := proxy.NewProxyHandler(
-		backend,
-		cfg.Password,
-		cfg.Algorithm,
-		cfg.ChunkSize,
-		backendAuthConfig,
-		proxyAuthConfig,
-		logger,
-		cfg.Timeout,
-		cfg.MaxIdleConns,
-		cfg.MaxIdleConnsPerHost,
-		cfg.IdleConnTimeout,
-	)
+proxyHandler, err := proxy.NewProxyHandler(
+	backend,
+	cfg.Password,
+	cfg.Algorithm,
+	cfg.ChunkSize,
+	backendAuthConfig,
+	proxyAuthConfig,
+	logger,
+	cfg.Timeout,
+	cfg.MaxIdleConns,
+	cfg.MaxIdleConnsPerHost,
+	cfg.IdleConnTimeout,
+	cfg.DnsServers,
+)
 	if err != nil {
 		logger.Error("创建代理处理器失败: %v", err)
 		os.Exit(1)

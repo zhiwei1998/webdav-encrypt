@@ -1,13 +1,17 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
 
 	"webdav-proxy/encryption"
 	"webdav-proxy/utils"
@@ -42,6 +46,9 @@ type ProxyHandler struct {
 	maxIdleConnsPerHost int
 	idleConnTimeout     time.Duration
 
+	// DNS配置
+	dnsServers []string
+
 	// 反向代理
 	reverseProxy *httputil.ReverseProxy
 
@@ -56,7 +63,8 @@ type ProxyHandler struct {
 // NewProxyHandler 创建新的代理处理器
 func NewProxyHandler(backend *url.URL, password, algorithm string, chunkSize int,
 	backendAuth *BackendAuthConfig, proxyAuth *ProxyAuthConfig, logger utils.Logger,
-	timeout time.Duration, maxIdleConns, maxIdleConnsPerHost int, idleConnTimeout time.Duration) (*ProxyHandler, error) {
+	timeout time.Duration, maxIdleConns, maxIdleConnsPerHost int, idleConnTimeout time.Duration,
+	dnsServers []string) (*ProxyHandler, error) {
 
 	h := &ProxyHandler{
 		backend:             backend,
@@ -70,6 +78,7 @@ func NewProxyHandler(backend *url.URL, password, algorithm string, chunkSize int
 		maxIdleConns:        maxIdleConns,
 		maxIdleConnsPerHost: maxIdleConnsPerHost,
 		idleConnTimeout:     idleConnTimeout,
+		dnsServers:          dnsServers,
 		stopCleanupChan:     make(chan struct{}),
 	}
 
@@ -158,6 +167,8 @@ func (h *ProxyHandler) createTransport() http.RoundTripper {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: h.timeout,
 		ExpectContinueTimeout: 1 * time.Second,
+		// 使用自定义DNS解析的DialContext
+		DialContext: h.dialWithCustomDNS,
 	}
 
 	// 返回我们的加密传输层
@@ -165,6 +176,145 @@ func (h *ProxyHandler) createTransport() http.RoundTripper {
 		handler: h,
 		base:    transport,
 	}
+}
+
+// 使用自定义DNS解析的DialContext函数
+func (h *ProxyHandler) dialWithCustomDNS(ctx context.Context, network, addr string) (net.Conn, error) {
+	// 解析地址，获取主机名和端口
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+
+	// 使用自定义DNS服务器解析域名
+	ips, err := h.resolveWithCustomDNS(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+
+	// 尝试连接解析得到的IP地址
+	var conn net.Conn
+	for _, ip := range ips {
+		// 构建IP地址:端口
+		ipAddr := net.JoinHostPort(ip, port)
+		// 创建连接
+		conn, err = (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			DualStack: false, // 禁用IPv6
+		}).DialContext(ctx, network, ipAddr)
+		if err == nil {
+			break
+		}
+	}
+
+	return conn, err
+}
+
+// 使用自定义DNS服务器解析域名
+func (h *ProxyHandler) resolveWithCustomDNS(ctx context.Context, host string) ([]string, error) {
+	// 如果是IP地址，直接返回
+	if net.ParseIP(host) != nil {
+		return []string{host}, nil
+	}
+
+	// 使用配置的DNS服务器进行解析
+	var ips []string
+	var err error
+
+	for _, dnsServer := range h.dnsServers {
+		ips, err = h.queryDNS(ctx, host, dnsServer)
+		if err == nil && len(ips) > 0 {
+			return ips, nil
+		}
+	}
+
+	// 如果没有配置DNS服务器或所有DNS服务器都失败，使用系统默认解析
+	if len(h.dnsServers) == 0 {
+		addrs, err := net.LookupHost(host)
+		if err == nil && len(addrs) > 0 {
+			return addrs, nil
+		}
+	}
+
+	// 如果所有解析都失败，返回最后一个错误
+	if err != nil {
+		return nil, err
+	}
+	return nil, fmt.Errorf("failed to resolve domain %s", host)
+}
+
+// 查询DNS服务器
+func (h *ProxyHandler) queryDNS(ctx context.Context, host, dnsServer string) ([]string, error) {
+	// 建立UDP连接到DNS服务器
+	conn, err := net.DialTimeout("udp", dnsServer, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	// 创建DNS查询消息
+	var msg dnsmessage.Message
+	msg.Header.ID = uint16(time.Now().UnixNano() % 65536)
+	msg.Header.RecursionDesired = true
+
+	// 添加查询
+	name, err := dnsmessage.NewName(host + ".")
+	if err != nil {
+		return nil, err
+	}
+	msg.Questions = append(msg.Questions, dnsmessage.Question{
+		Name:  name,
+		Type:  dnsmessage.TypeA,
+		Class: dnsmessage.ClassINET,
+	})
+
+	// 序列化查询消息
+	buf, err := msg.Pack()
+	if err != nil {
+		return nil, err
+	}
+
+	// 设置连接超时
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	// 发送查询
+	_, err = conn.Write(buf)
+	if err != nil {
+		return nil, err
+	}
+
+	// 接收响应
+	response := make([]byte, 512)
+	n, err := conn.Read(response)
+	if err != nil {
+		return nil, err
+	}
+
+	// 解析响应
+	var respMsg dnsmessage.Message
+	err = respMsg.Unpack(response[:n])
+	if err != nil {
+		return nil, err
+	}
+
+	// 提取A记录
+	var ips []string
+	for _, answer := range respMsg.Answers {
+		if answer.Header.Type == dnsmessage.TypeA {
+			// 使用类型断言来获取A记录
+			if aRecord, ok := answer.Body.(*dnsmessage.AResource); ok {
+				// 将[4]byte转换为net.IP并转换为字符串
+				ips = append(ips, net.IP(aRecord.A[:]).String())
+			}
+		}
+	}
+
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("no A records found for %s", host)
+	}
+
+	return ips, nil
 }
 
 // getOrCreateEncryptor 获取或创建加密器

@@ -1,5 +1,10 @@
 module webdav-proxy
 
-go 1.21
+go 1.24.0
 
-require gopkg.in/yaml.v3 v3.0.1 // indirect
+toolchain go1.24.11
+
+require (
+	golang.org/x/net v0.47.0
+	gopkg.in/yaml.v3 v3.0.1
+)

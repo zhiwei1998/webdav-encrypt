@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"webdav-proxy/utils"
@@ -30,6 +31,7 @@ type Config struct {
 	MaxIdleConns        int           `yaml:"max_idle_conns" env:"MAX_IDLE_CONNS" default:"100"`                  // 最大空闲连接数
 	MaxIdleConnsPerHost int           `yaml:"max_idle_conns_per_host" env:"MAX_IDLE_CONNS_PER_HOST" default:"10"` // 每个主机的最大空闲连接数
 	IdleConnTimeout     time.Duration `yaml:"idle_conn_timeout" env:"IDLE_CONN_TIMEOUT" default:"90s"`            // 空闲连接超时时间
+	DnsServers          []string      `yaml:"dns_servers" env:"DNS_SERVERS" default:"8.8.8.8:53,8.8.4.4:53"`      // 公共DNS服务器列表，格式为：IP:端口
 	ConfigFile          string        `yaml:"-" env:"CONFIG_FILE" default:""`                                     // 配置文件路径
 }
 
@@ -123,6 +125,8 @@ func loadDefaults(cfg *Config) error {
 	cfg.MaxIdleConns = 100
 	cfg.MaxIdleConnsPerHost = 10
 	cfg.IdleConnTimeout = 90 * time.Second
+	// 设置默认公共DNS服务器（Google DNS）
+	cfg.DnsServers = []string{"8.8.8.8:53", "8.8.4.4:53"}
 	return nil
 }
 
@@ -198,6 +202,11 @@ max_idle_conns: 100
 max_idle_conns_per_host: 10
 # 空闲连接超时时间 (可选，默认: 1m30s)
 idle_conn_timeout: 1m30s
+
+## DNS设置
+# 公共DNS服务器列表 (可选，默认: Google DNS)
+# 格式为：IP:端口,多个服务器用逗号分隔
+dns_servers: ["8.8.8.8:53", "8.8.4.4:53"]
 `
 
 	// 写入文件
@@ -291,6 +300,20 @@ func loadFromEnv(cfg *Config) error {
 			cfg.IdleConnTimeout = t
 		} else {
 			return fmt.Errorf("invalid IDLE_CONN_TIMEOUT: %w", err)
+		}
+	}
+
+	if dnsServers := os.Getenv("DNS_SERVERS"); dnsServers != "" {
+		// 解析DNS服务器列表，格式为：IP:端口,IP:端口
+		cfg.DnsServers = []string{}
+		for _, server := range strings.Split(dnsServers, ",") {
+			if server = strings.TrimSpace(server); server != "" {
+				cfg.DnsServers = append(cfg.DnsServers, server)
+			}
+		}
+		// 如果解析结果为空，使用默认值
+		if len(cfg.DnsServers) == 0 {
+			cfg.DnsServers = []string{"8.8.8.8:53", "8.8.4.4:53"}
 		}
 	}
 
