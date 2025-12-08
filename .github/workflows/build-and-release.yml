@@ -41,7 +41,7 @@ jobs:
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o webdav-encrypt-darwin-arm64 .
       
       - name: Upload binaries to Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.generate_tag.outputs.tag }}
           name: Release ${{ steps.generate_tag.outputs.tag }}
