@@ -2,11 +2,13 @@ package proxy
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +32,18 @@ type ProxyAuthConfig struct {
 	Password string
 }
 
+// DNS缓存条目
+type dnsCacheEntry struct {
+	ips     []string
+	expires time.Time
+}
+
+// 加密器缓存项
+type encryptorCacheEntry struct {
+	encryptor    encryption.Encryptor
+	lastAccessed time.Time
+}
+
 // ProxyHandler WebDAV代理处理器
 type ProxyHandler struct {
 	backend     *url.URL
@@ -48,6 +62,12 @@ type ProxyHandler struct {
 
 	// DNS配置
 	dnsServers []string
+
+	// DNS缓存
+	dnsCache sync.Map
+
+	// DNS缓存TTL
+	dnsCacheTTL time.Duration
 
 	// 反向代理
 	reverseProxy *httputil.ReverseProxy
@@ -80,6 +100,7 @@ func NewProxyHandler(backend *url.URL, password, algorithm string, chunkSize int
 		idleConnTimeout:     idleConnTimeout,
 		dnsServers:          dnsServers,
 		stopCleanupChan:     make(chan struct{}),
+		dnsCacheTTL:         5 * time.Minute, // DNS缓存5分钟
 	}
 
 	// 创建传输层
@@ -166,9 +187,21 @@ func (h *ProxyHandler) createTransport() http.RoundTripper {
 		IdleConnTimeout:       h.idleConnTimeout,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: h.timeout,
-		ExpectContinueTimeout: 1 * time.Second,
+		ExpectContinueTimeout: 500 * time.Millisecond, // 减少期望继续超时时间
 		// 使用自定义DNS解析的DialContext
 		DialContext: h.dialWithCustomDNS,
+		// 启用HTTP/2支持
+		ForceAttemptHTTP2: true,
+		// 禁用压缩（加密数据压缩效果差，反而消耗CPU）
+		DisableCompression: true,
+		// 增加TLS会话缓存大小
+		TLSClientConfig: &tls.Config{
+			SessionTicketsDisabled: false,
+			MinVersion:             tls.VersionTLS12,
+			MaxVersion:             tls.VersionTLS13,
+			Renegotiation:          tls.RenegotiateFreelyAsClient,
+			ClientSessionCache:     tls.NewLRUClientSessionCache(1000),
+		},
 	}
 
 	// 返回我们的加密传输层
@@ -218,6 +251,16 @@ func (h *ProxyHandler) resolveWithCustomDNS(ctx context.Context, host string) ([
 		return []string{host}, nil
 	}
 
+	// 检查DNS缓存
+	if cached, ok := h.dnsCache.Load(host); ok {
+		entry := cached.(dnsCacheEntry)
+		if time.Now().Before(entry.expires) {
+			return entry.ips, nil
+		}
+		// 缓存过期，删除它
+		h.dnsCache.Delete(host)
+	}
+
 	// 使用配置的DNS服务器进行解析
 	var ips []string
 	var err error
@@ -225,6 +268,11 @@ func (h *ProxyHandler) resolveWithCustomDNS(ctx context.Context, host string) ([
 	for _, dnsServer := range h.dnsServers {
 		ips, err = h.queryDNS(ctx, host, dnsServer)
 		if err == nil && len(ips) > 0 {
+			// 缓存解析结果
+			h.dnsCache.Store(host, dnsCacheEntry{
+				ips:     ips,
+				expires: time.Now().Add(h.dnsCacheTTL),
+			})
 			return ips, nil
 		}
 	}
@@ -233,6 +281,11 @@ func (h *ProxyHandler) resolveWithCustomDNS(ctx context.Context, host string) ([
 	if len(h.dnsServers) == 0 {
 		addrs, err := net.LookupHost(host)
 		if err == nil && len(addrs) > 0 {
+			// 缓存解析结果
+			h.dnsCache.Store(host, dnsCacheEntry{
+				ips:     addrs,
+				expires: time.Now().Add(h.dnsCacheTTL),
+			})
 			return addrs, nil
 		}
 	}
@@ -323,8 +376,12 @@ func (h *ProxyHandler) getOrCreateEncryptor(fileSize int64) (encryption.Encrypto
 	cacheKey := fmt.Sprintf("%s:%d", h.algorithm, fileSize)
 
 	// 尝试从缓存获取
-	if enc, ok := h.encryptorCache.Load(cacheKey); ok {
-		return enc.(encryption.Encryptor), nil
+	if cached, ok := h.encryptorCache.Load(cacheKey); ok {
+		entry := cached.(encryptorCacheEntry)
+		// 更新访问时间
+		entry.lastAccessed = time.Now()
+		h.encryptorCache.Store(cacheKey, entry)
+		return entry.encryptor, nil
 	}
 
 	// 创建新的加密器
@@ -336,31 +393,73 @@ func (h *ProxyHandler) getOrCreateEncryptor(fileSize int64) (encryption.Encrypto
 	}
 
 	// 存入缓存
-	h.encryptorCache.Store(cacheKey, enc)
+	h.encryptorCache.Store(cacheKey, encryptorCacheEntry{
+		encryptor:    enc,
+		lastAccessed: time.Now(),
+	})
 
 	return enc, nil
 }
 
 // startEncryptorCleanup 启动加密器缓存清理协程
 func (h *ProxyHandler) startEncryptorCleanup() {
-	// 每小时清理一次缓存
-	h.encryptorCleanupTicker = time.NewTicker(1 * time.Hour)
+	// 每30分钟清理一次缓存
+	h.encryptorCleanupTicker = time.NewTicker(30 * time.Minute)
 
 	go func() {
 		for {
 			select {
 			case <-h.encryptorCleanupTicker.C:
-				// 检查当前缓存大小
-				var count int
+				// 清理长时间未使用的加密器（超过1小时）
+				now := time.Now()
+				threshold := now.Add(-1 * time.Hour)
+				var removedCount int
 				h.encryptorCache.Range(func(key, value interface{}) bool {
-					count++
+					entry := value.(encryptorCacheEntry)
+					if entry.lastAccessed.Before(threshold) {
+						h.encryptorCache.Delete(key)
+						removedCount++
+					}
+					return true
+				})
+				if removedCount > 0 {
+					h.logger.Debug("清理了 %d 个长时间未使用的加密器缓存", removedCount)
+				}
+
+				// 检查当前缓存大小，如果超过2000，清理最早的一半
+				var totalCount int
+				h.encryptorCache.Range(func(key, value interface{}) bool {
+					totalCount++
 					return true
 				})
 
-				// 如果缓存项超过1000，清空缓存
-				if count > 1000 {
-					h.logger.Debug("加密器缓存已满 (%d项)，正在清空", count)
-					h.encryptorCache = sync.Map{}
+				if totalCount > 2000 {
+					// 收集所有缓存项
+					entries := make([]struct {
+						key          interface{}
+						lastAccessed time.Time
+					}, 0, totalCount)
+
+					h.encryptorCache.Range(func(key, value interface{}) bool {
+						entry := value.(encryptorCacheEntry)
+						entries = append(entries, struct {
+							key          interface{}
+							lastAccessed time.Time
+						}{key, entry.lastAccessed})
+						return true
+					})
+
+					// 按访问时间排序（最早的在前）
+					sort.Slice(entries, func(i, j int) bool {
+						return entries[i].lastAccessed.Before(entries[j].lastAccessed)
+					})
+
+					// 清理一半的缓存项
+					toRemove := entries[:totalCount/2]
+					for _, entry := range toRemove {
+						h.encryptorCache.Delete(entry.key)
+					}
+					h.logger.Debug("加密器缓存过大 (%d项)，清理了 %d 个最早的缓存项", totalCount, len(toRemove))
 				}
 			case <-h.stopCleanupChan:
 				h.encryptorCleanupTicker.Stop()

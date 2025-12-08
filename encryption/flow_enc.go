@@ -19,7 +19,16 @@ var cachePasswdOutward sync.Map
 
 // getPassWdOutward 获取派生密码
 func getPassWdOutward(password string, encryptType string) string {
+	// 生成缓存键
+	cacheKey := password + "|" + encryptType
+	
+	// 检查缓存
+	if cached, ok := cachePasswdOutward.Load(cacheKey); ok {
+		return cached.(string)
+	}
+	
 	// 实现与Node.js一致的派生密码逻辑
+	var result string
 	if len(password) != 32 {
 		// 根据不同的加密类型使用不同的盐值
 		var salt []byte
@@ -36,9 +45,15 @@ func getPassWdOutward(password string, encryptType string) string {
 
 		// 使用PBKDF2派生密钥，与Node.js保持一致的参数
 		dk := pbkdf2(password, salt, 1000, 16)
-		return hex.EncodeToString(dk)
+		result = hex.EncodeToString(dk)
+	} else {
+		result = password
 	}
-	return password
+	
+	// 存入缓存
+	cachePasswdOutward.Store(cacheKey, result)
+	
+	return result
 }
 
 // SetPosition 设置加密/解密位置

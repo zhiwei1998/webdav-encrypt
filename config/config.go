@@ -21,7 +21,7 @@ type Config struct {
 	Algorithm           string        `yaml:"algorithm" env:"ALGORITHM" default:"aesctr"`                         // 加密算法，可选值：mix, rc4, aesctr
 	ChunkSize           int           `yaml:"chunk_size" env:"CHUNK_SIZE" default:"8192"`                         // 块大小（字节）
 	Debug               bool          `yaml:"debug" env:"DEBUG" default:"false"`                                  // 是否启用调试模式（向后兼容，建议使用log_level）
-	LogLevel            string        `yaml:"log_level" env:"LOG_LEVEL" default:"info"`                             // 日志级别：trace, debug, info, warn, error, fatal
+	LogLevel            string        `yaml:"log_level" env:"LOG_LEVEL" default:"info"`                           // 日志级别：trace, debug, info, warn, error, fatal
 	BackendUser         string        `yaml:"backend_user" env:"BACKEND_USER" default:""`                         // 后端WebDAV服务器用户名
 	BackendPass         string        `yaml:"backend_pass" env:"BACKEND_PASS" default:""`                         // 后端WebDAV服务器密码
 	EnableAuth          bool          `yaml:"enable_auth" env:"ENABLE_AUTH" default:"false"`                      // 是否启用代理端基本认证
@@ -93,11 +93,7 @@ func (c *Config) Validate() error {
 	}
 
 	// 验证认证配置
-	if c.EnableAuth {
-		if c.AuthUser == "" || c.AuthPass == "" {
-			return fmt.Errorf("auth user and password are required when auth is enabled")
-		}
-	}
+	// 这里不再强制要求auth user和pass，因为已经在main.go中处理了auth逻辑
 
 	return nil
 }
@@ -159,36 +155,35 @@ func GenerateDefaultConfig(filePath string) error {
 
 ## 服务端设置
 # 后端WebDAV服务器URL (必填项，必须修改为实际的WebDAV服务器地址)
-backend_url: "https://example.com/webdav/"
+backend_url: "http://10.10.2.140:5244/dav"
 # 后端WebDAV用户名 (可选，如果后端服务器需要认证)
-backend_user: "webdav-username"
+backend_user: ""
 # 后端WebDAV密码 (可选，如果后端服务器需要认证)
-backend_pass: "webdav-password"
+backend_pass: ""
 
 
 ## 加密设置
 # 加密算法 (可选，默认: aesctr，可选项: mix, rc4, aesctr)
 algorithm: aesctr
 # 加密密码 (可选，如果不设置则不进行加密)
-password: "your-encryption-password"
+password: "123456"
 
 
 ## 代理端设置
 # 监听地址 (默认: :8080)
 listen_addr: ":8080"
-# 启用代理端基本认证 (可选，默认: false)
+
+# 启用代理端基本认证 (可选，默认: false, 当后端webdav启用认证时同步开启，代理端验证用户密码)
 enable_auth: false
-# 代理认证用户名 (可选，当enable_auth为true时必填)
-auth_user: "proxy-username"
-# 代理认证密码 (可选，当enable_auth为true时必填)
-auth_pass: "proxy-password"
+# 代理认证用户名 (可选，当启用代理端认证时使用)
+auth_user: ""
+# 代理认证密码 (可选，当启用代理端认证时使用)
+auth_pass: ""
 
 
 ## 日志设置
 # 日志级别 (可选，默认: info，可选项: trace, debug, info, warn, error, fatal)
 log_level: "info"
-# 启用调试模式 (可选，默认: false，向后兼容，建议使用log_level)
-debug: false
 
 
 ## 性能设置

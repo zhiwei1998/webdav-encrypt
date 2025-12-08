@@ -19,7 +19,7 @@ type proxyTransport struct {
 // RoundTrip 执行HTTP请求
 func (t *proxyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	originalPath := req.URL.Path // 保存原始请求路径
-	t.handler.logger.Debug("[TRANSPORT] 开始处理请求: %s %s", req.Method, originalPath)
+	t.handler.logger.Info("[TRANSPORT] 开始处理请求: %s %s", req.Method, originalPath)
 
 	// 根据请求方法处理加解密
 	switch req.Method {
@@ -41,7 +41,7 @@ func (t *proxyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 // handleUpload 处理文件上传（加密）
 func (t *proxyTransport) handleUpload(req *http.Request) (*http.Response, error) {
-	t.handler.logger.Debug("[UPLOAD] 开始处理文件上传: %s %s", req.Method, req.URL.Path)
+	t.handler.logger.Info("[UPLOAD] 开始处理文件上传: %s %s", req.Method, req.URL.Path)
 
 	if req.Body == nil {
 		t.handler.logger.Debug("[UPLOAD] 请求体为空，直接转发")
@@ -198,7 +198,7 @@ func (t *proxyTransport) handleDownload(req *http.Request) (*http.Response, erro
 	// 拦截302重定向响应进行特殊处理
 	if resp.StatusCode == http.StatusFound {
 		location := resp.Header.Get("Location")
-		t.handler.logger.Debug("[DOWNLOAD] 拦截到302重定向响应: %s", location)
+		t.handler.logger.Info("[DOWNLOAD] 拦截到302重定向响应: %s", location)
 
 		// 创建新的请求来跟随重定向
 		redirectReq, err := http.NewRequest(http.MethodGet, location, nil)
@@ -355,7 +355,7 @@ func (t *proxyTransport) handleDownload(req *http.Request) (*http.Response, erro
 		endPos = fullFileSize - 1
 	}
 
-	t.handler.logger.Debug("[DOWNLOAD] 文件大小: %d字节, 范围: %d-%d, 算法: %s, 块大小: %d",
+	t.handler.logger.Info("[DOWNLOAD] 文件大小: %d字节, 范围: %d-%d, 算法: %s, 块大小: %d",
 		fullFileSize, startPos, endPos, t.handler.algorithm, t.handler.chunkSize)
 
 	// 创建解密器

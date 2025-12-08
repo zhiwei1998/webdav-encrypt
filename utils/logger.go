@@ -60,13 +60,13 @@ func ParseLogLevel(level string) LogLevel {
 
 // GetLogLevel 根据字符串配置和debug标志获取日志级别，处理向后兼容
 func GetLogLevel(logLevel string, debug bool) LogLevel {
-	// 如果设置了logLevel，优先使用
-	if logLevel != "" {
-		return ParseLogLevel(logLevel)
-	}
-	// 否则根据debug标志决定
+	// 如果启用了debug模式，无论logLevel是什么都使用DEBUG级别
 	if debug {
 		return LogLevelDebug
+	}
+	// 否则根据logLevel设置
+	if logLevel != "" {
+		return ParseLogLevel(logLevel)
 	}
 	return LogLevelInfo
 }

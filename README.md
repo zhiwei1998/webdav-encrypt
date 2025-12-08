@@ -1,17 +1,18 @@
-# WebDAV加密代理（复用后端认证）
+# WebDAV加密代理（webdav-encrypt）
 
-一个高性能WebDAV代理服务器，用于在上传时加密文件，在下载时解密文件。代理会自动使用后端WebDAV服务器的账号密码进行认证，提供透明的加密/解密服务。
+一个高性能WebDAV代理服务器，用于在上传时加密文件，在下载时解密文件。提供透明的加密/解密服务，并支持灵活的认证配置。
 
 ## 功能特性
 
 - **透明加密/解密**：客户端无需特殊配置，使用标准WebDAV客户端即可
-- **复用后端认证**：代理自动使用后端WebDAV服务器的账号密码进行认证
+- **多种认证模式**：支持显式代理认证、同步后端认证或无认证
 - **保持路径不变**：不加密文件名和目录结构，便于管理和查找
 - **多种加密算法支持**：mix, rc4, aesctr（推荐）
-- **代理端基本认证**：可选的代理端认证，增加额外安全层
 - **流式处理**：支持大文件传输，内存占用低
 - **性能优化**：连接池、超时控制和加密器缓存
 - **灵活的配置管理**：支持命令行参数、环境变量和配置文件
+- **配置文件生成**：自动生成默认配置文件，便于快速配置
+- **调试模式**：`--debug`参数优先级高于配置文件的log_level设置
 - **完整的WebDAV协议支持**：PUT, GET, DELETE, PROPFIND等所有常用方法
 - **日志分级**：支持多种日志级别（trace, debug, info, warn, error, fatal），便于调试和监控
 
@@ -22,13 +23,13 @@
 ### 1. 构建
 
 ```bash
-go build -o webdav-proxy .
+go build -o webdav-encrypt .
 ```
 
 2. 运行
 
 ```bash
-./webdav-proxy \
+./webdav-encrypt \
   --listen :8080 \
   --backend "http://nextcloud.example.com/remote.php/webdav/" \
   --backend-user "your-username" \
@@ -37,11 +38,11 @@ go build -o webdav-proxy .
   --algorithm aesctr
 ```
 
-3. ### Docker运行
+3. Docker运行
 
 ```bash
 # 构建Docker镜像
-docker build -t webdav-proxy .
+docker build -t webdav-encrypt .
 
 # 运行Docker容器
 docker run -d \
@@ -52,7 +53,7 @@ docker run -d \
   -e PASSWORD="your-encryption-key" \
   -e ALGORITHM="aesctr" \
   -e LOG_LEVEL="info" \
-  webdav-proxy
+  webdav-encrypt
 ```
 
 ### 命令行参数
@@ -61,21 +62,21 @@ docker run -d \
 |------|------|--------|
 | `--listen` | 监听地址 | `:8080` |
 | `--backend` | 后端WebDAV服务器URL | 必填 |
-| `--backend-user` | 后端WebDAV用户名 | 必填 |
-| `--backend-pass` | 后端WebDAV密码 | 必填 |
+| `--backend-user` | 后端WebDAV用户名 | 可选 |
+| `--backend-pass` | 后端WebDAV密码 | 可选 |
 | `--password` | 加密密码 | 必填 |
 | `--algorithm` | 加密算法 (mix, rc4, aesctr) | `aesctr` |
 | `--chunk-size` | 块大小(字节) | `8192` |
-| `--debug` | 启用调试模式（向后兼容，建议使用`--log-level`） | `false` |
+| `--debug` | 启用调试模式（优先级高于log_level） | `false` |
 | `--log-level` | 日志级别 (trace, debug, info, warn, error, fatal) | `info` |
-| `--auth` | 启用代理端基本认证 | `false` |
 | `--auth-user` | 代理认证用户名 | `""` |
 | `--auth-pass` | 代理认证密码 | `""` |
+| `-c, --config` | 配置文件路径 (YAML格式) | 可选 |
 | `--timeout` | HTTP请求超时时间(秒) | `30` |
 | `--max-idle-conns` | 最大空闲连接数 | `100` |
 | `--max-idle-conns-per-host` | 每个主机的最大空闲连接数 | `10` |
 | `--idle-conn-timeout` | 空闲连接超时时间(秒) | `90` |
-| `--config` | 配置文件路径 | `config.yaml` |
+| `-h, --help` | 显示帮助信息 | - |
 
 ### 环境变量
 
@@ -92,7 +93,6 @@ docker run -d \
 | `CHUNK_SIZE` | `--chunk-size` |
 | `LOG_LEVEL` | `--log-level` |
 | `DEBUG` | `--debug` |
-| `ENABLE_AUTH` | `--auth` |
 | `AUTH_USER` | `--auth-user` |
 | `AUTH_PASS` | `--auth-pass` |
 | `TIMEOUT` | `--timeout` |
@@ -129,18 +129,18 @@ echo "/mnt/webdav proxy-user proxy-password" > /etc/davfs2/secrets
 
 ```bash
 # 如果代理启用了认证
-rclone config create webdav-proxy webdav \
+rclone config create webdav-encrypt webdav \
   url=http://localhost:8080 \
   vendor=other \
   user=proxy-user \
   pass=proxy-password
 
 # 如果代理未启用认证
-rclone config create webdav-proxy webdav \
+rclone config create webdav-encrypt webdav \
   url=http://localhost:8080 \
   vendor=other
 
-rclone mount webdav-proxy: /mnt/webdav --vfs-cache-mode full
+rclone mount webdav-encrypt: /mnt/webdav --vfs-cache-mode full
 ```
 
 ## 加密算法
@@ -149,18 +149,67 @@ rclone mount webdav-proxy: /mnt/webdav --vfs-cache-mode full
 2. **rc4** - 基于RC4和MD5的流加密算法
 3. **aesctr** - AES-CTR模式（推荐）
 
-使用场景
+## 认证逻辑
 
-场景1：简单的加密代理
+代理支持三种认证模式：
 
+1. **显式代理认证**：提供了`--auth-user`和`--auth-pass`（命令行或配置文件），使用这些凭据进行代理认证
+2. **同步后端认证**：没有提供显式代理认证，但提供了`--backend-user`和`--backend-pass`（命令行或配置文件），同步使用后端凭据进行代理认证
+3. **无认证**：其他情况，禁用代理认证
+
+## 配置文件
+
+### 生成默认配置文件
+
+```bash
+./webdav-encrypt -c config.yaml
 ```
-客户端 → 代理（无认证） → 加密 → 后端WebDAV（使用后端认证）
-```
 
-场景2：带认证的加密代理
+生成默认配置文件后，程序会自动退出，需要修改配置文件后重新启动。
 
-```
-客户端 → 代理（需要认证） → 加密 → 后端WebDAV（使用后端认证）
+### 配置文件示例
+
+```yaml
+# WebDAV Proxy 配置文件
+
+## 服务端设置
+# 后端WebDAV服务器URL (必填项)
+backend_url: "http://example.com/remote.php/webdav/"
+# 后端WebDAV用户名 (可选)
+backend_user: "your-backend-user"
+# 后端WebDAV密码 (可选)
+backend_pass: "your-backend-pass"
+
+## 加密设置
+# 加密算法 (可选，默认: aesctr)
+algorithm: aesctr
+# 加密密码 (必填)
+password: "your-encryption-key"
+
+## 代理端设置
+# 监听地址 (默认: :8080)
+listen_addr: ":8080"
+
+# 代理认证用户名 (可选)
+auth_user: ""
+# 代理认证密码 (可选)
+auth_pass: ""
+
+## 日志设置
+# 日志级别 (可选，默认: info)
+log_level: "info"
+
+## 性能设置
+# 块大小(字节) (可选，默认: 8192)
+chunk_size: 8192
+# 请求超时时间 (可选，默认: 30s)
+timeout: 30s
+# 最大空闲连接数 (可选，默认: 100)
+max_idle_conns: 100
+# 每个主机的最大空闲连接数 (可选，默认: 10)
+max_idle_conns_per_host: 10
+# 空闲连接超时时间 (可选，默认: 90s)
+idle_conn_timeout: 90s
 ```
 
 测试
@@ -191,13 +240,13 @@ echo "This is a test file for WebDAV proxy" > test.txt
 
 # 上传文件
 echo "1. 上传文件..."
-curl -X PUT http://localhost:8080/test-proxy.txt \
+curl -X PUT http://localhost:8080/test-encrypt.txt \
   --data-binary @test.txt \
   -H "Content-Type: text/plain"
 
 # 下载文件
 echo "2. 下载文件..."
-curl http://localhost:8080/test-proxy.txt -o downloaded.txt
+curl http://localhost:8080/test-encrypt.txt -o downloaded.txt
 
 # 比较文件
 if cmp -s test.txt downloaded.txt; then
@@ -257,14 +306,14 @@ rm -f test.txt downloaded.txt
 1. **通过命令行参数**：
 
 ```bash
-./webdav-proxy --log-level debug ...
+./webdav-encrypt --log-level debug ...
 ```
 
 2. **通过环境变量**：
 
 ```bash
 export LOG_LEVEL=info
-./webdav-proxy ...
+./webdav-encrypt ...
 ```
 
 3. **通过配置文件**：
@@ -273,8 +322,17 @@ export LOG_LEVEL=info
 ## 日志设置
 # 日志级别 (可选，默认: info)
 log_level: "warn"
-# 启用调试模式 (向后兼容，建议使用log_level)
+# 启用调试模式 (优先级高于log_level，设置为true时强制使用debug级别)
 debug: false
+```
+
+### 调试模式优先级
+
+当同时使用 `--debug` 参数和配置文件中的 `log_level` 设置时，`--debug` 参数的优先级更高，会强制使用 DEBUG 级别日志。
+
+```bash
+# 即使配置文件中log_level设置为info，也会输出DEBUG级别的日志
+./webdav-encrypt -c config.yaml --debug
 ```
 
 许可证
